@@ -1,57 +1,63 @@
 import streamlit as st
 import numpy as np
-import tensorflow as tf
+import torch
+import torchvision.models as models
+import torchvision.transforms as transforms
 import pickle
 from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
 
 st.set_page_config(
-    page_title="Few-Shot Object Recognition",
-    page_icon="📦",
+    page_title="Object Recognition",
     layout="centered"
 )
 
-st.title("📦 Few-Shot Object Recognition Demo")
+# -----------------------------
+# HEADER
+# -----------------------------
 
-st.write(
-"""
+st.markdown("""
+# Object Recognition Demo
 Teach the system a new object using a few photos and it will recognize it later.
-Works directly in the browser.
-"""
-)
+""")
 
 # -----------------------------
-# LOAD FEATURE MODEL
+# LOAD MODEL
 # -----------------------------
 
 @st.cache_resource
 def load_model():
-    model = tf.keras.applications.MobileNetV2(
-        weights="imagenet",
-        include_top=False,
-        pooling="avg"
-    )
+    model = models.mobilenet_v2(pretrained=True)
+    model = torch.nn.Sequential(*(list(model.children())[:-1]))
+    model.eval()
     return model
 
 model = load_model()
 
 # -----------------------------
-# EMBEDDING FUNCTION
+# TRANSFORM
+# -----------------------------
+
+transform = transforms.Compose([
+    transforms.Resize((224,224)),
+    transforms.ToTensor(),
+])
+
+# -----------------------------
+# EMBEDDING
 # -----------------------------
 
 def get_embedding(image):
 
-    image = image.resize((224,224))
+    img = transform(image).unsqueeze(0)
 
-    img = np.array(image)
+    with torch.no_grad():
+        emb = model(img)
 
-    img = tf.keras.applications.mobilenet_v2.preprocess_input(img)
-
-    img = np.expand_dims(img, axis=0)
-
-    emb = model.predict(img, verbose=0)
+    emb = emb.numpy().reshape(1,-1)
 
     return emb
+
 
 # -----------------------------
 # DATABASE
@@ -72,20 +78,21 @@ db = load_db()
 # SIDEBAR
 # -----------------------------
 
+st.sidebar.title("Navigation")
+
 mode = st.sidebar.radio(
-    "Select Mode",
-    ["Add Object","Recognize","Object Database"]
+    "Mode",
+    ["Add Object","Recognize","Objects"]
 )
 
-st.sidebar.info(
-"""
-How to use
+st.sidebar.markdown("---")
+st.sidebar.markdown("""
+**How it works**
 
-1️⃣ Add object  
-2️⃣ Take 3-5 pictures  
-3️⃣ Try recognition
-"""
-)
+1. Add a new object  
+2. Capture a few images  
+3. Try recognition
+""")
 
 # -----------------------------
 # ADD OBJECT
@@ -93,11 +100,22 @@ How to use
 
 if mode == "Add Object":
 
-    st.header("➕ Teach a new object")
+    st.subheader("Add New Object")
 
-    label = st.text_input("Object name")
+    col1, col2 = st.columns([1,1])
 
-    img_file = st.camera_input("Take picture")
+    with col1:
+
+        label = st.text_input("Object Name")
+
+        img_file = st.camera_input("Capture Image")
+
+    with col2:
+
+        st.markdown("**Tips**")
+        st.write("• Take images from different angles")
+        st.write("• Ensure good lighting")
+        st.write("• Fill most of the frame")
 
     if img_file and label:
 
@@ -114,7 +132,8 @@ if mode == "Add Object":
 
         st.success("Image stored")
 
-        st.write("Images stored:", len(db[label]))
+        st.write("Total images:", len(db[label]))
+
 
 # -----------------------------
 # RECOGNITION
@@ -122,9 +141,9 @@ if mode == "Add Object":
 
 if mode == "Recognize":
 
-    st.header("🔎 Object Recognition")
+    st.subheader("Recognition")
 
-    img_file = st.camera_input("Show object to camera")
+    img_file = st.camera_input("Show object")
 
     if img_file:
 
@@ -145,28 +164,47 @@ if mode == "Recognize":
                 best_score = score
                 best_label = label
 
-        THRESHOLD = 0.75
+        threshold = 0.75
 
-        if best_score < THRESHOLD:
+        if best_score < threshold:
             best_label = "Unknown"
 
-        st.subheader("Prediction")
+        st.markdown("---")
 
-        st.metric("Object", best_label)
+        col1, col2 = st.columns([1,1])
 
-        st.metric("Confidence", round(best_score,2))
+        with col1:
+            st.image(image, use_column_width=True)
+
+        with col2:
+
+            st.metric("Prediction", best_label)
+
+            st.progress(float(best_score))
+
+            st.write("Confidence:", round(best_score,2))
+
 
 # -----------------------------
-# DATABASE VIEW
+# OBJECT DATABASE
 # -----------------------------
 
-if mode == "Object Database":
+if mode == "Objects":
 
-    st.header("📚 Stored Objects")
+    st.subheader("Stored Objects")
 
     if len(db) == 0:
-        st.info("No objects added yet")
 
-    for obj in db:
+        st.info("No objects stored yet.")
 
-        st.write(f"**{obj}** — {len(db[obj])} images")
+    else:
+
+        for obj in db:
+
+            col1, col2 = st.columns([3,1])
+
+            with col1:
+                st.write(obj)
+
+            with col2:
+                st.write(len(db[obj]), "images")
