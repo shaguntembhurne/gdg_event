@@ -5,14 +5,14 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from pytorch_tabnet.tab_model import TabNetClassifier
 
-st.set_page_config(page_title="Credit Risk AI", layout="centered")
+st.set_page_config(page_title="Tabular AI System", layout="centered")
 
-st.title("Credit Risk Prediction (TabNet)")
+st.title("Tabular AI (TabNet)")
 
 # -----------------------------
 # UPLOAD DATA
 # -----------------------------
-file = st.file_uploader("Upload Credit Dataset (CSV)", type=["csv"])
+file = st.file_uploader("Upload CSV Dataset", type=["csv"])
 
 if file is not None:
 
@@ -57,11 +57,11 @@ if file is not None:
 
         # Scale
         scaler = StandardScaler()
-        X = scaler.fit_transform(X)
+        X_scaled = scaler.fit_transform(X)
 
         # Split
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42
+            X_scaled, y, test_size=0.2, random_state=42
         )
 
         # -----------------------------
@@ -69,7 +69,7 @@ if file is not None:
         # -----------------------------
         if st.button("Train Model"):
 
-            with st.spinner("Training..."):
+            with st.spinner("Training model..."):
 
                 model = TabNetClassifier(verbose=0)
                 model.fit(
@@ -85,28 +85,54 @@ if file is not None:
             st.success("Model Ready")
             st.metric("Accuracy", f"{acc*100:.2f}%")
 
-            # Save
+            # Save everything
             st.session_state.model = model
             st.session_state.scaler = scaler
-            st.session_state.n_features = X.shape[1]
+            st.session_state.columns = X.columns.tolist()
+            st.session_state.raw_df = df
+            st.session_state.encoders = encoders
 
 # -----------------------------
-# PREDICT SECTION
+# SMART PREDICTION UI
 # -----------------------------
 if "model" in st.session_state:
 
     st.subheader("Test Custom Input")
 
     inputs = []
+    df_original = st.session_state.raw_df
+    columns = st.session_state.columns
+    encoders = st.session_state.encoders
 
-    for i in range(st.session_state.n_features):
-        val = st.number_input(f"Feature {i+1}", value=0.0)
+    for col in columns:
+
+        if df_original[col].dtype == "object":
+            options = df_original[col].dropna().unique().tolist()
+            val = st.selectbox(col, options)
+
+        else:
+            min_val = float(df_original[col].min())
+            max_val = float(df_original[col].max())
+            mean_val = float(df_original[col].mean())
+
+            val = st.slider(col, min_val, max_val, mean_val)
+
         inputs.append(val)
 
+    # -----------------------------
+    # PREDICT
+    # -----------------------------
     if st.button("Predict"):
 
-        data = np.array([inputs])
-        data = st.session_state.scaler.transform(data)
+        input_df = pd.DataFrame([inputs], columns=columns)
+
+        # Encode categorical
+        for col in input_df.columns:
+            if col in encoders:
+                input_df[col] = encoders[col].transform(input_df[col])
+
+        # Scale
+        data = st.session_state.scaler.transform(input_df)
 
         pred = st.session_state.model.predict(data)[0]
         prob = st.session_state.model.predict_proba(data)[0].max()
@@ -116,4 +142,4 @@ if "model" in st.session_state:
         st.subheader("Result")
         st.write("Prediction:", label)
         st.progress(float(prob))
-        st.write("Confidence:", round(prob,2))
+        st.write("Confidence:", round(prob, 2))
