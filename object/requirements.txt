@@ -6,3 +6,4 @@ pytorch-tabnet
 torch
 torchvision
 pillow
+ultralytics
