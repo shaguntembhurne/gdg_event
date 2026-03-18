@@ -3,133 +3,188 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
+import plotly.graph_objects as go
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Crowd Song Twin Matcher", page_icon="🎵", layout="centered")
+st.set_page_config(page_title="Crowd Twin | Audio Matcher", page_icon="🎧", layout="wide")
 
-# --- DATA LOADING ---
+# --- DATA LOADING & GLOBAL SCALING ---
 @st.cache_data
-def load_data():
-    # Load your specific dataset
+def load_and_prep_data():
     try:
         df = pd.read_csv("/Users/shaguntembhurne/gdg_event/cleaned_dataset.csv")
     except FileNotFoundError:
-        st.error("⚠️ Please ensure 'spotify_dataset.csv' is in the same directory as this script.")
-        return pd.DataFrame()
+        st.error("⚠️ 'spotify_dataset.csv' not found. Please ensure it's in the same folder.")
+        return pd.DataFrame(), [], None
 
-    # Create a display column combining Artist and Track
+    # Standardize display names
     if 'Artist' in df.columns and 'Track' in df.columns:
         df['Display_Name'] = df['Artist'] + " - " + df['Track']
     else:
-        df['Display_Name'] = df['Title'] # Fallback if columns differ slightly
+        df['Display_Name'] = df['Title']
         
-    # Drop rows missing crucial audio features to prevent errors
+    # The audio features we care about
     features = ['Danceability', 'Energy', 'Loudness', 'Speechiness', 
                 'Acousticness', 'Instrumentalness', 'Liveness', 'Valence', 'Tempo']
     df = df.dropna(subset=features)
     
-    return df, features
+    # INDUSTRY UPGRADE: Global Scaling
+    # We must scale the entire dataset so Tempo (0-200) and Danceability (0-1) are on the same playing field
+    scaler = MinMaxScaler()
+    df[features] = scaler.fit_transform(df[features])
+    
+    return df, features, scaler
 
-df, audio_features = load_data()
+df, audio_features, scaler = load_and_prep_data()
 
-# --- SESSION STATE INITIALIZATION ---
-# This acts as our temporary database for the crowd
+# --- SESSION STATE (THE CROWD DATABASE) ---
 if "crowd_data" not in st.session_state:
     st.session_state.crowd_data = []
 
-# --- APP UI ---
-st.title("🎧 Find Your Crowd Song Twin!")
-st.markdown("Enter your name, pick your anthem, and we'll match you with someone in the room who shares your sonic vibe.")
+# --- UI HEADER ---
+st.title("🎧 Find Your Crowd Song Twin")
+st.markdown("Build your sonic profile and our algorithm will pair you with your exact vibe match in the room.")
+st.divider()
 
 if df.empty:
     st.stop()
 
-# --- USER INPUT ---
-with st.container():
-    st.subheader("1. Who are you?")
-    user_name = st.text_input("Enter your name or nickname:", placeholder="e.g., DJ Data")
-    
-    st.subheader("2. Pick your song")
-    # Streamlit's selectbox is searchable, which is perfect for a crowd finding their song
-    selected_song = st.selectbox("Search for a track from the dataset:", df['Display_Name'].unique())
+# --- MAIN LAYOUT ---
+# Using columns makes the app look like a professional dashboard
+col_input, col_results = st.columns([1, 1.5], gap="large")
 
-# --- MATCHING LOGIC ---
-if st.button("Find My Twin! 👯‍♂️", type="primary"):
-    if not user_name:
-        st.warning("Please enter your name first!")
-    else:
-        # 1. Get the features of the selected song
-        song_row = df[df['Display_Name'] == selected_song].iloc[0]
-        user_vector = song_row[audio_features].values.reshape(1, -1)
-        
-        # 2. Check if we have enough people in the crowd to make a match
-        if len(st.session_state.crowd_data) == 0:
-            st.success(f"Welcome to the party, {user_name}! You're the first one here. Hang tight, your twin is coming soon.")
+with col_input:
+    st.subheader("1. Profile Setup")
+    user_name = st.text_input("Display Name:", placeholder="e.g., DJ Data")
+    fav_artist = st.text_input("Who is your all-time favorite artist?", placeholder="e.g., Daft Punk")
+    
+    st.subheader("2. Build Your Vibe")
+    st.markdown("Select up to **3 tracks** that define your current mood.")
+    
+    # INDUSTRY UPGRADE: Multiselect for a composite vibe
+    selected_songs = st.multiselect(
+        "Search tracks:", 
+        df['Display_Name'].unique(),
+        max_selections=3
+    )
+    
+    find_match_btn = st.button("Initialize Match Sequence 🚀", type="primary", use_container_width=True)
+
+# --- MATCHING ENGINE ---
+with col_results:
+    if find_match_btn:
+        if not user_name or not selected_songs:
+            st.warning("⚠️ Please enter your name and select at least one track to proceed.")
         else:
-            # 3. Calculate similarity against the crowd
-            best_match_name = None
-            best_match_song = None
-            highest_score = -1
-            
-            # Normalize vectors for fair comparison using Min-Max scaling logic
-            scaler = MinMaxScaler()
-            
-            for person in st.session_state.crowd_data:
-                # Prevent matching with yourself if you try twice
-                if person['name'] == user_name:
-                    continue
+            with st.spinner("Analyzing audio features & querying crowd database..."):
+                # 1. Create the User's "Composite Vibe Vector"
+                # We get the scaled features for all selected songs and average them
+                user_song_rows = df[df['Display_Name'].isin(selected_songs)]
+                user_vector = user_song_rows[audio_features].mean().values.reshape(1, -1)
+                
+                # 2. Check Database Size
+                if len(st.session_state.crowd_data) == 0:
+                    st.success(f"**Profile Saved!** Welcome, {user_name}. You are patient zero. Let the next person step up to find a match!")
+                else:
+                    # 3. The Matching Algorithm
+                    best_match = None
+                    highest_score = -1
                     
-                crowd_vector = person['vector'].reshape(1, -1)
-                
-                # Stack, scale, and compare
-                stacked = np.vstack((user_vector, crowd_vector))
-                scaled = scaler.fit_transform(stacked)
-                
-                # Cosine similarity returns a matrix; we want the similarity between item 0 and 1
-                similarity = cosine_similarity(scaled[0:1], scaled[1:2])[0][0]
-                
-                if similarity > highest_score:
-                    highest_score = similarity
-                    best_match_name = person['name']
-                    best_match_song = person['song']
-            
-            # 4. Display the Result
-            if best_match_name:
-                match_percentage = round(highest_score * 100, 1)
-                st.divider()
-                st.snow() # Fun visual effect for the crowd
-                st.header(f"🎉 We found a match, {user_name}!")
-                st.subheader(f"Your Song Twin is **{best_match_name}**")
-                st.markdown(f"**Their track:** {best_match_song}")
-                st.metric(label="Vibe Match Score", value=f"{match_percentage}%")
-                
-                # Optional: Show a bar chart comparing their vibes
-                st.markdown("### Vibe Comparison")
-                crowd_row = df[df['Display_Name'] == best_match_song].iloc[0]
-                comparison_df = pd.DataFrame({
-                    user_name: song_row[audio_features].values,
-                    best_match_name: crowd_row[audio_features].values
-                }, index=audio_features)
-                st.bar_chart(comparison_df)
-            else:
-                st.info("You're the only one with this unique vibe so far! Let's get more people in the system.")
+                    for person in st.session_state.crowd_data:
+                        # Don't match with yourself
+                        if person['name'].lower() == user_name.lower():
+                            continue
+                            
+                        crowd_vector = person['vector'].reshape(1, -1)
+                        
+                        # Calculate raw cosine similarity (0 to 1)
+                        base_similarity = cosine_similarity(user_vector, crowd_vector)[0][0]
+                        
+                        # INDUSTRY UPGRADE: Personalization Bonus
+                        # If they share a favorite artist, give a 5% similarity bump
+                        artist_bonus = 0.05 if (fav_artist and person['artist'].lower() == fav_artist.lower()) else 0.0
+                        
+                        total_score = min(base_similarity + artist_bonus, 1.0) # Cap at 100%
+                        
+                        if total_score > highest_score:
+                            highest_score = total_score
+                            best_match = person
+                    
+                    # 4. Display Results
+                    if best_match:
+                        match_percentage = round(highest_score * 100, 1)
+                        st.balloons()
+                        
+                        st.subheader(f"Target Acquired, {user_name}! 🎯")
+                        
+                        # Use metrics for a clean, professional look
+                        m1, m2 = st.columns(2)
+                        m1.metric(label="Your Crowd Twin", value=best_match['name'])
+                        m2.metric(label="Vibe Alignment Score", value=f"{match_percentage}%")
+                        
+                        if fav_artist.lower() == best_match['artist'].lower() and fav_artist != "":
+                            st.info(f"✨ **Bonus:** You both love {fav_artist.title()}!")
+                        
+                        # 5. Professional Radar Chart using Plotly
+                        st.markdown("### Sonic DNA Comparison")
+                        
+                        fig = go.Figure()
+                        
+                        # Add User's Vibe
+                        fig.add_trace(go.Scatterpolar(
+                            r=user_vector[0],
+                            theta=audio_features,
+                            fill='toself',
+                            name=user_name,
+                            line_color='#1DB954' # Spotify Green
+                        ))
+                        
+                        # Add Twin's Vibe
+                        fig.add_trace(go.Scatterpolar(
+                            r=best_match['vector'],
+                            theta=audio_features,
+                            fill='toself',
+                            name=best_match['name'],
+                            line_color='#FFFFFF'
+                        ))
+                        
+                        fig.update_layout(
+                            polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+                            showlegend=True,
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            margin=dict(t=20, b=20, l=20, r=20)
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        with st.expander("View their selected tracks"):
+                            for song in best_match['songs']:
+                                st.write(f"🎵 {song}")
+                                
+                    else:
+                        st.info("You're the only one with this unique vibe so far! Let the next person try.")
 
-        # 5. Add the current user to the crowd database AFTER checking for matches
-        # This ensures they don't match with themselves
-        st.session_state.crowd_data.append({
-            'name': user_name,
-            'song': selected_song,
-            'vector': user_vector[0]
-        })
+            # 6. Save current user to database
+            # We do this at the end so they don't match with themselves
+            st.session_state.crowd_data.append({
+                'name': user_name,
+                'artist': fav_artist,
+                'songs': selected_songs,
+                'vector': user_vector[0]
+            })
 
-# --- SIDEBAR ---
-# Show who is currently in the "database"
+# --- SIDEBAR ADMIN ---
 with st.sidebar:
-    st.header("👥 Crowd Roster")
-    st.write(f"Total people registered: {len(st.session_state.crowd_data)}")
-    for p in st.session_state.crowd_data:
-        st.caption(f"• {p['name']} ({p['song'].split(' - ')[0]})")
+    st.header("🎛️ Live Database")
+    st.metric("Total Profiles", len(st.session_state.crowd_data))
     
-    if st.button("Clear Crowd Data"):
+    with st.expander("View Roster"):
+        for p in st.session_state.crowd_data:
+            st.markdown(f"**{p['name']}**")
+            st.caption(f"Fav: {p['artist'] if p['artist'] else 'N/A'}")
+    
+    st.divider()
+    if st.button("⚠️ Reset Database", type="secondary", use_container_width=True):
         st.session_state.crowd_data = []
         st.rerun()
