@@ -6,63 +6,66 @@ import torchvision.transforms as transforms
 import pickle
 from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
+from ultralytics import YOLO
 
-st.set_page_config(
-    page_title="Object Recognition",
-    layout="centered"
-)
+st.set_page_config(page_title="Object AI System", layout="centered")
 
 # -----------------------------
-# HEADER
+# STYLE (clean + responsive)
 # -----------------------------
-
 st.markdown("""
-# Object Recognition Demo
-Teach the system a new object using a few photos and it will recognize it later.
-""")
+<style>
+.block-container {padding-top: 2rem;}
+img {border-radius: 10px;}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("Object Recognition System")
 
 # -----------------------------
-# LOAD MODEL
+# SAFE LOAD MODELS
 # -----------------------------
+@st.cache_resource
+def load_yolo():
+    try:
+        return YOLO("yolov8n.pt")
+    except:
+        return None
 
 @st.cache_resource
-def load_model():
-    model = models.mobilenet_v2(pretrained=True)
-    model = torch.nn.Sequential(*(list(model.children())[:-1]))
-    model.eval()
-    return model
+def load_embed_model():
+    try:
+        model = models.mobilenet_v2(pretrained=True)
+        model = torch.nn.Sequential(*(list(model.children())[:-1]))
+        model.eval()
+        return model
+    except:
+        return None
 
-model = load_model()
+yolo_model = load_yolo()
+embed_model = load_embed_model()
+
+if yolo_model is None or embed_model is None:
+    st.error("Model failed to load. Restart app.")
+    st.stop()
 
 # -----------------------------
 # TRANSFORM
 # -----------------------------
-
 transform = transforms.Compose([
     transforms.Resize((224,224)),
     transforms.ToTensor(),
 ])
 
-# -----------------------------
-# EMBEDDING
-# -----------------------------
-
 def get_embedding(image):
-
     img = transform(image).unsqueeze(0)
-
     with torch.no_grad():
-        emb = model(img)
-
-    emb = emb.numpy().reshape(1,-1)
-
-    return emb
-
+        emb = embed_model(img)
+    return emb.numpy().reshape(1,-1)
 
 # -----------------------------
-# DATABASE
+# DB
 # -----------------------------
-
 def load_db():
     try:
         return pickle.load(open("objects.pkl","rb"))
@@ -75,136 +78,110 @@ def save_db(db):
 db = load_db()
 
 # -----------------------------
-# SIDEBAR
+# MODE
 # -----------------------------
-
-st.sidebar.title("Navigation")
-
-mode = st.sidebar.radio(
-    "Mode",
-    ["Add Object","Recognize","Objects"]
+mode = st.selectbox(
+    "Select Mode",
+    ["Detect Objects", "Teach New Object", "Recognize Object"]
 )
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("""
-**How it works**
-
-1. Add a new object  
-2. Capture a few images  
-3. Try recognition
-""")
-
 # -----------------------------
-# ADD OBJECT
+# CAMERA FUNCTION (CONSISTENT)
 # -----------------------------
-
-if mode == "Add Object":
-
-    st.subheader("Add New Object")
-
-    col1, col2 = st.columns([1,1])
-
-    with col1:
-
-        label = st.text_input("Object Name")
-
-        img_file = st.camera_input("Capture Image")
-
-    with col2:
-
-        st.markdown("**Tips**")
-        st.write("• Take images from different angles")
-        st.write("• Ensure good lighting")
-        st.write("• Fill most of the frame")
-
-    if img_file and label:
-
-        image = Image.open(img_file)
-
-        emb = get_embedding(image)
-
-        if label not in db:
-            db[label] = []
-
-        db[label].append(emb)
-
-        save_db(db)
-
-        st.success("Image stored")
-
-        st.write("Total images:", len(db[label]))
-
-
-# -----------------------------
-# RECOGNITION
-# -----------------------------
-
-if mode == "Recognize":
-
-    st.subheader("Recognition")
-
-    img_file = st.camera_input("Show object")
-
+def capture_image(label):
+    img_file = st.camera_input(label)
     if img_file:
+        try:
+            image = Image.open(img_file).convert("RGB")
+            return image
+        except:
+            return None
+    return None
 
-        image = Image.open(img_file)
+# -----------------------------
+# DETECT (YOLO)
+# -----------------------------
+if mode == "Detect Objects":
 
-        emb = get_embedding(image)
+    st.subheader("Object Detection")
 
-        best_label = "Unknown"
-        best_score = 0
+    image = capture_image("Take a picture")
 
-        for label in db:
+    if image is not None:
 
-            stored = np.vstack(db[label])
+        img_array = np.array(image)
 
-            score = cosine_similarity(emb, stored).mean()
+        try:
+            results = yolo_model(img_array, conf=0.3)
+            result_img = results[0].plot()
 
-            if score > best_score:
-                best_score = score
-                best_label = label
+            st.image(result_img, use_column_width=True)
 
-        threshold = 0.75
+        except:
+            st.warning("Detection failed. Try again.")
 
-        if best_score < threshold:
+# -----------------------------
+# TEACH
+# -----------------------------
+elif mode == "Teach New Object":
+
+    st.subheader("Teach Object")
+
+    label = st.text_input("Object Name")
+
+    image = capture_image("Capture Image")
+
+    if image is not None and label:
+
+        try:
+            emb = get_embedding(image)
+
+            if label not in db:
+                db[label] = []
+
+            db[label].append(emb)
+            save_db(db)
+
+            st.success("Image saved")
+            st.write("Total samples:", len(db[label]))
+
+        except:
+            st.warning("Failed to process image")
+
+# -----------------------------
+# RECOGNIZE
+# -----------------------------
+elif mode == "Recognize Object":
+
+    st.subheader("Recognize")
+
+    image = capture_image("Show object")
+
+    if image is not None:
+
+        try:
+            emb = get_embedding(image)
+
             best_label = "Unknown"
+            best_score = 0
 
-        st.markdown("---")
+            for label in db:
+                stored = np.vstack(db[label])
+                score = cosine_similarity(emb, stored).mean()
 
-        col1, col2 = st.columns([1,1])
+                if score > best_score:
+                    best_score = score
+                    best_label = label
 
-        with col1:
+            if best_score < 0.7:
+                best_label = "Unknown"
+
             st.image(image, use_column_width=True)
 
-        with col2:
-
-            st.metric("Prediction", best_label)
-
+            st.markdown("### Result")
+            st.write("Prediction:", best_label)
             st.progress(float(best_score))
-
             st.write("Confidence:", round(best_score,2))
 
-
-# -----------------------------
-# OBJECT DATABASE
-# -----------------------------
-
-if mode == "Objects":
-
-    st.subheader("Stored Objects")
-
-    if len(db) == 0:
-
-        st.info("No objects stored yet.")
-
-    else:
-
-        for obj in db:
-
-            col1, col2 = st.columns([3,1])
-
-            with col1:
-                st.write(obj)
-
-            with col2:
-                st.write(len(db[obj]), "images")
+        except:
+            st.warning("Recognition failed")
