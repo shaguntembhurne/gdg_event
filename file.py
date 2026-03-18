@@ -1,145 +1,112 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from pytorch_tabnet.tab_model import TabNetClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics.pairwise import cosine_similarity
 
-st.set_page_config(page_title="Tabular AI System", layout="centered")
+st.set_page_config(page_title="Song Twin Generator", layout="centered")
 
-st.title("Tabular AI (TabNet)")
-
-# -----------------------------
-# UPLOAD DATA
-# -----------------------------
-file = st.file_uploader("Upload CSV Dataset", type=["csv"])
-
-if file is not None:
-
-    df = pd.read_csv(file)
-
-    st.subheader("Dataset Preview")
-    st.dataframe(df.head())
-
-    # -----------------------------
-    # SELECT TARGET
-    # -----------------------------
-    target_col = st.selectbox("Select Target Column", df.columns)
-
-    if target_col:
-
-        # -----------------------------
-        # CLEAN DATA
-        # -----------------------------
-        df = df.dropna(subset=[target_col])
-
-        X = df.drop(columns=[target_col])
-        y = df[target_col]
-
-        # Fill missing values
-        for col in X.columns:
-            if X[col].dtype == "object":
-                X[col] = X[col].fillna("Unknown")
-            else:
-                X[col] = X[col].fillna(X[col].mean())
-
-        # Encode categorical
-        encoders = {}
-        for col in X.columns:
-            if X[col].dtype == "object":
-                le = LabelEncoder()
-                X[col] = le.fit_transform(X[col])
-                encoders[col] = le
-
-        # Encode target if needed
-        if y.dtype == "object":
-            y = LabelEncoder().fit_transform(y)
-
-        # Scale
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-
-        # Split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, random_state=42
-        )
-
-        # -----------------------------
-        # TRAIN MODEL
-        # -----------------------------
-        if st.button("Train Model"):
-
-            with st.spinner("Training model..."):
-
-                model = TabNetClassifier(verbose=0)
-                model.fit(
-                    X_train, y_train,
-                    max_epochs=50,
-                    patience=10,
-                    batch_size=256
-                )
-
-                preds = model.predict(X_test)
-                acc = (preds == y_test).mean()
-
-            st.success("Model Ready")
-            st.metric("Accuracy", f"{acc*100:.2f}%")
-
-            # Save everything
-            st.session_state.model = model
-            st.session_state.scaler = scaler
-            st.session_state.columns = X.columns.tolist()
-            st.session_state.raw_df = df
-            st.session_state.encoders = encoders
+st.title("Find Your Song Twin")
 
 # -----------------------------
-# SMART PREDICTION UI
+# LOAD DATA
 # -----------------------------
-if "model" in st.session_state:
+@st.cache_data
+def load_data():
+    df = pd.read_csv("/Users/shaguntembhurne/gdg_event/cleaned_dataset.csv")
 
-    st.subheader("Test Custom Input")
+    # Keep only required columns
+    df = df[[
+        "Artist", "Track",
+        "Danceability", "Energy", "Loudness",
+        "Speechiness", "Acousticness",
+        "Instrumentalness", "Liveness",
+        "Valence", "Tempo"
+    ]]
 
-    inputs = []
-    df_original = st.session_state.raw_df
-    columns = st.session_state.columns
-    encoders = st.session_state.encoders
+    # Remove missing values
+    df = df.dropna()
 
-    for col in columns:
+    return df
 
-        if df_original[col].dtype == "object":
-            options = df_original[col].dropna().unique().tolist()
-            val = st.selectbox(col, options)
+df = load_data()
 
-        else:
-            min_val = float(df_original[col].min())
-            max_val = float(df_original[col].max())
-            mean_val = float(df_original[col].mean())
+# -----------------------------
+# FEATURE SET
+# -----------------------------
+features = [
+    "Danceability", "Energy", "Loudness",
+    "Speechiness", "Acousticness",
+    "Instrumentalness", "Liveness",
+    "Valence", "Tempo"
+]
 
-            val = st.slider(col, min_val, max_val, mean_val)
+# Normalize
+scaler = StandardScaler()
+X = scaler.fit_transform(df[features])
 
-        inputs.append(val)
+# -----------------------------
+# USER INPUT
+# -----------------------------
+st.subheader("Create Your Vibe")
+
+name = st.text_input("Your Name")
+
+dance = st.slider("Dance Energy", 0.0, 1.0, 0.5)
+energy = st.slider("Energy Level", 0.0, 1.0, 0.5)
+mood = st.slider("Mood (Happy ↔ Sad)", 0.0, 1.0, 0.5)
+# -----------------------------
+# MORE USER INPUT
+# -----------------------------
+acoustic = st.slider("Acoustic Feel", 0.0, 1.0, 0.5)
+live = st.slider("Live Concert Feel", 0.0, 1.0, 0.3)
+tempo = st.slider("Tempo (Speed)", 60.0, 200.0, 120.0)
+
+# Map inputs to feature vector
+user_input = np.array([[
+    dance,          # Danceability
+    energy,         # Energy
+    -5.0,           # Loudness (fixed avg)
+    0.05,           # Speechiness (fixed)
+    acoustic,       # Acousticness
+    0.0,            # Instrumentalness (fixed)
+    live,           # Liveness
+    mood,           # Valence
+    tempo           # Tempo
+]])
+
+# Scale user input
+user_scaled = scaler.transform(user_input)
+
+# -----------------------------
+# FIND SIMILAR SONG
+# -----------------------------
+if st.button("Find My Song Twin"):
+
+    similarity = cosine_similarity(user_scaled, X)[0]
+
+    # Get best match
+    idx = np.argmax(similarity)
+
+    song = df.iloc[idx]
+
+    st.markdown("---")
+
+    st.subheader(f"{name}'s Song Twin")
+
+    st.write(f"**Track:** {song['Track']}")
+    st.write(f"**Artist:** {song['Artist']}")
+
+    st.progress(float(similarity[idx]))
+
+    st.write("Match Score:", round(similarity[idx], 2))
 
     # -----------------------------
-    # PREDICT
+    # BONUS: TOP 5 SONGS
     # -----------------------------
-    if st.button("Predict"):
+    st.subheader("Top Matches")
 
-        input_df = pd.DataFrame([inputs], columns=columns)
+    top_idx = np.argsort(similarity)[-5:][::-1]
 
-        # Encode categorical
-        for col in input_df.columns:
-            if col in encoders:
-                input_df[col] = encoders[col].transform(input_df[col])
-
-        # Scale
-        data = st.session_state.scaler.transform(input_df)
-
-        pred = st.session_state.model.predict(data)[0]
-        prob = st.session_state.model.predict_proba(data)[0].max()
-
-        label = "Safe" if pred == 0 else "Risky"
-
-        st.subheader("Result")
-        st.write("Prediction:", label)
-        st.progress(float(prob))
-        st.write("Confidence:", round(prob, 2))
+    for i in top_idx:
+        st.write(f"{df.iloc[i]['Track']} — {df.iloc[i]['Artist']}")
