@@ -6,12 +6,11 @@ import torchvision.transforms as transforms
 import pickle
 from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
-from ultralytics import YOLO
 
 st.set_page_config(page_title="Object AI System", layout="centered")
 
 # -----------------------------
-# STYLE (clean + responsive)
+# STYLE
 # -----------------------------
 st.markdown("""
 <style>
@@ -28,8 +27,10 @@ st.title("Object Recognition System")
 @st.cache_resource
 def load_yolo():
     try:
+        from ultralytics import YOLO   # ✅ moved here
         return YOLO("yolov8n.pt")
-    except:
+    except Exception as e:
+        print("YOLO load error:", e)
         return None
 
 @st.cache_resource
@@ -44,10 +45,6 @@ def load_embed_model():
 
 yolo_model = load_yolo()
 embed_model = load_embed_model()
-
-if yolo_model is None or embed_model is None:
-    st.error("Model failed to load. Restart app.")
-    st.stop()
 
 # -----------------------------
 # TRANSFORM
@@ -86,7 +83,7 @@ mode = st.selectbox(
 )
 
 # -----------------------------
-# CAMERA FUNCTION (CONSISTENT)
+# CAMERA
 # -----------------------------
 def capture_image(label):
     img_file = st.camera_input(label)
@@ -105,18 +102,19 @@ if mode == "Detect Objects":
 
     st.subheader("Object Detection")
 
+    if yolo_model is None:
+        st.warning("YOLO not supported in this environment")
+        st.stop()
+
     image = capture_image("Take a picture")
 
     if image is not None:
-
         img_array = np.array(image)
 
         try:
             results = yolo_model(img_array, conf=0.3)
             result_img = results[0].plot()
-
             st.image(result_img, use_column_width=True)
-
         except:
             st.warning("Detection failed. Try again.")
 
@@ -128,11 +126,9 @@ elif mode == "Teach New Object":
     st.subheader("Teach Object")
 
     label = st.text_input("Object Name")
-
     image = capture_image("Capture Image")
 
     if image is not None and label:
-
         try:
             emb = get_embedding(image)
 
@@ -158,7 +154,6 @@ elif mode == "Recognize Object":
     image = capture_image("Show object")
 
     if image is not None:
-
         try:
             emb = get_embedding(image)
 
