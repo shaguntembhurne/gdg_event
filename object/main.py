@@ -23,6 +23,20 @@ img {border-radius: 10px;}
 st.title("Object Recognition System")
 
 # -----------------------------
+# COCO LABELS
+# -----------------------------
+COCO_LABELS = [
+"__background__","person","bicycle","car","motorcycle","airplane","bus","train","truck","boat",
+"traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep",
+"cow","elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee",
+"skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard",
+"tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich",
+"orange","broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed",
+"dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven",
+"toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush"
+]
+
+# -----------------------------
 # LOAD MODELS
 # -----------------------------
 @st.cache_resource
@@ -56,7 +70,7 @@ def get_embedding(image):
     return emb.numpy().reshape(1,-1)
 
 # -----------------------------
-# DETECTION FUNCTION
+# DETECTION (YOLO STYLE)
 # -----------------------------
 def detect_objects(image):
     img_tensor = transforms.ToTensor()(image)
@@ -66,10 +80,32 @@ def detect_objects(image):
 
     draw = ImageDraw.Draw(image)
 
-    for box, score in zip(preds['boxes'], preds['scores']):
+    for box, score, label in zip(preds['boxes'], preds['scores'], preds['labels']):
         if score > 0.5:
             x1, y1, x2, y2 = box.tolist()
+            name = COCO_LABELS[label]
+
+            # Box
             draw.rectangle([x1, y1, x2, y2], outline="red", width=3)
+
+            # Text
+            text = f"{name} {score:.2f}"
+            bbox = draw.textbbox((0, 0), text)
+
+            # Background
+            draw.rectangle(
+                [x1, y1 - (bbox[3]-bbox[1]) - 4,
+                 x1 + (bbox[2]-bbox[0]) + 4,
+                 y1],
+                fill="red"
+            )
+
+            # Text
+            draw.text(
+                (x1 + 2, y1 - (bbox[3]-bbox[1]) - 2),
+                text,
+                fill="white"
+            )
 
     return image
 
@@ -102,8 +138,7 @@ def capture_image(label):
     img_file = st.camera_input(label)
     if img_file:
         try:
-            image = Image.open(img_file).convert("RGB")
-            return image
+            return Image.open(img_file).convert("RGB")
         except:
             return None
     return None
