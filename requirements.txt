@@ -5,5 +5,5 @@ scikit-learn
 torch
 torchvision
 pillow
-ultralytics
-opencv-python-headless
+ultralytics==8.0.200
+opencv-python-headless==4.8.0.76
