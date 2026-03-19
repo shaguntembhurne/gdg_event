@@ -149,11 +149,22 @@ mode = st.selectbox(
 # CAMERA
 # -----------------------------
 def capture_image(label):
-    img_file = st.camera_input(label)
-    if img_file:
+    # Give the user an option to either upload a file or use the camera
+    upload_method = st.radio("Choose image source:", ["Upload File", "Use Camera"], horizontal=True)
+    
+    img_file = None
+    if upload_method == "Upload File":
+        # This creates the drag-and-drop upload box
+        img_file = st.file_uploader(f"{label} (Upload)", type=["jpg", "jpeg", "png"])
+    else:
+        # This opens the live webcam
+        img_file = st.camera_input(f"{label} (Camera)")
+
+    if img_file is not None:
         try:
             return Image.open(img_file).convert("RGB")
-        except:
+        except Exception as e:
+            st.error(f"Error opening image: {e}")
             return None
     return None
 
