@@ -3,8 +3,9 @@ import numpy as np
 import torch
 import torchvision.models as models
 import torchvision.transforms as transforms
+import torchvision
 import pickle
-from PIL import Image
+from PIL import Image, ImageDraw
 from sklearn.metrics.pairwise import cosine_similarity
 
 st.set_page_config(page_title="Object AI System", layout="centered")
@@ -22,28 +23,22 @@ img {border-radius: 10px;}
 st.title("Object Recognition System")
 
 # -----------------------------
-# SAFE LOAD MODELS
+# LOAD MODELS
 # -----------------------------
 @st.cache_resource
-def load_yolo():
-    try:
-        from ultralytics import YOLO   # ✅ moved here
-        return YOLO("yolov8n.pt")
-    except Exception as e:
-        print("YOLO load error:", e)
-        return None
+def load_detector():
+    model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
+    model.eval()
+    return model
 
 @st.cache_resource
 def load_embed_model():
-    try:
-        model = models.mobilenet_v2(pretrained=True)
-        model = torch.nn.Sequential(*(list(model.children())[:-1]))
-        model.eval()
-        return model
-    except:
-        return None
+    model = models.mobilenet_v2(pretrained=True)
+    model = torch.nn.Sequential(*(list(model.children())[:-1]))
+    model.eval()
+    return model
 
-yolo_model = load_yolo()
+detector = load_detector()
 embed_model = load_embed_model()
 
 # -----------------------------
@@ -59,6 +54,24 @@ def get_embedding(image):
     with torch.no_grad():
         emb = embed_model(img)
     return emb.numpy().reshape(1,-1)
+
+# -----------------------------
+# DETECTION FUNCTION
+# -----------------------------
+def detect_objects(image):
+    img_tensor = transforms.ToTensor()(image)
+
+    with torch.no_grad():
+        preds = detector([img_tensor])[0]
+
+    draw = ImageDraw.Draw(image)
+
+    for box, score in zip(preds['boxes'], preds['scores']):
+        if score > 0.5:
+            x1, y1, x2, y2 = box.tolist()
+            draw.rectangle([x1, y1, x2, y2], outline="red", width=3)
+
+    return image
 
 # -----------------------------
 # DB
@@ -96,27 +109,20 @@ def capture_image(label):
     return None
 
 # -----------------------------
-# DETECT (YOLO)
+# DETECT
 # -----------------------------
 if mode == "Detect Objects":
 
     st.subheader("Object Detection")
 
-    if yolo_model is None:
-        st.warning("YOLO not supported in this environment")
-        st.stop()
-
     image = capture_image("Take a picture")
 
     if image is not None:
-        img_array = np.array(image)
-
         try:
-            results = yolo_model(img_array, conf=0.3)
-            result_img = results[0].plot()
+            result_img = detect_objects(image)
             st.image(result_img, use_column_width=True)
         except:
-            st.warning("Detection failed. Try again.")
+            st.warning("Detection failed")
 
 # -----------------------------
 # TEACH
@@ -142,7 +148,7 @@ elif mode == "Teach New Object":
             st.write("Total samples:", len(db[label]))
 
         except:
-            st.warning("Failed to process image")
+            st.warning("Failed")
 
 # -----------------------------
 # RECOGNIZE
