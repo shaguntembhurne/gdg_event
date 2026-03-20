@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import numpy as np
 import torch
@@ -7,6 +8,9 @@ import torchvision
 import pickle
 from PIL import Image, ImageDraw
 from sklearn.metrics.pairwise import cosine_similarity
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(SCRIPT_DIR, "objects.pkl")
 
 st.set_page_config(page_title="Object AI System", layout="centered")
 
@@ -128,12 +132,12 @@ def detect_objects(image):
 # -----------------------------
 def load_db():
     try:
-        return pickle.load(open("objects.pkl","rb"))
+        return pickle.load(open(DB_PATH, "rb"))
     except:
         return {}
 
 def save_db(db):
-    pickle.dump(db, open("objects.pkl","wb"))
+    pickle.dump(db, open(DB_PATH, "wb"))
 
 db = load_db()
 

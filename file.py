@@ -1,9 +1,12 @@
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
 import plotly.graph_objects as go
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # --- 1. PAGE SETUP & CUSTOM CSS ---
 st.set_page_config(page_title="Sonic Twin Matcher", page_icon="🎧", layout="wide", initial_sidebar_state="collapsed")
@@ -46,9 +49,9 @@ st.markdown("""
 @st.cache_data
 def load_and_prep_data():
     try:
-        df = pd.read_csv("/Users/shaguntembhurne/gdg_event/cleaned_dataset.csv")
+        df = pd.read_csv(os.path.join(SCRIPT_DIR, "cleaned_dataset.csv"))
     except FileNotFoundError:
-        st.error("⚠️ 'spotify_dataset.csv' is missing from the folder.")
+        st.error("⚠️ 'cleaned_dataset.csv' is missing from the project folder.")
         return pd.DataFrame(), [], None
 
     if 'Artist' in df.columns and 'Track' in df.columns:
